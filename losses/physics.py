@@ -1,7 +1,7 @@
 import tensorflow as tf
 
-from utils import *
-from layers import *
+from losses.utils import *
+from losses.layers import *
 
 
 def deformation_gradient(triangles, Dm_inv):
@@ -28,6 +28,11 @@ def stretching_energy(v, cloth, return_average=True):
     Dm_inv = tf.repeat([cloth.Dm_inv], tf.shape(v)[0], axis=0)
 
     F = deformation_gradient(triangles, Dm_inv)
+
+    # clip_norm = .8
+    # use_norm = tf.constant(1.0, dtype=tf.float64)
+    # F_,_ = tf.clip_by_global_norm(F, clip_norm, use_norm)
+
     G = green_strain_tensor(F)
 
     # Energy
@@ -42,6 +47,24 @@ def stretching_energy(v, cloth, return_average=True):
     
     return tf.reduce_sum(energy, axis=-1)
 
+
+def stretching_energy2(v, cloth, mu=11.1, lam=20.9, return_average=True):
+  batch_size = tf.cast(tf.shape(v)[0], v.dtype)
+  triangles = gather_triangles(v, cloth.f)
+
+  Dm_inv = tf.repeat([cloth.Dm_inv], tf.shape(v)[0], axis=0)
+
+  F = deformation_gradient(triangles, Dm_inv)
+  G = green_strain_tensor(F)
+
+  mat = cloth.material
+
+  Equation8 = 0.5 * lam * tf.pow(tf.linalg.trace(G), 2) + mu * tf.linalg.trace(tf.transpose(G, [0, 1, 3, 2]) @ G)
+  Equation9 = cloth.f_area[tf.newaxis] * mat.thickness * Equation8
+
+  if return_average:
+    return tf.reduce_sum(Equation9) / batch_size
+  return tf.reduce_sum(Equation9, axis=-1)
 
 def bending_energy(v, cloth, return_average=True): 
     '''
@@ -137,8 +160,9 @@ def inertial_term_sequence(x, mass, time_step, return_average=True):
 
 def collision_penalty(va, vb, nb, eps=1e-3):
     batch_size = tf.cast(tf.shape(va)[0], va.dtype)
-
+    # Compute body normals
     closest_vertices = NearestNeighbour(dtype=va.dtype)(va, vb)
+
     vb = tf.gather(vb, closest_vertices, batch_dims=1)
     nb = tf.gather(nb, closest_vertices, batch_dims=1)
 
@@ -174,36 +198,39 @@ if __name__ == "__main__":
         material=material,
         dtype=tf.float32
     )
+    for i in range(10):
+        # Example of how to call the functions
+        batch_size = 8#128
+        num_frames = 3
+        dummy_input = tf.reshape(cloth.v_template, (1, 1, -1, 3))
+        dummy_input = tf.tile(dummy_input, (batch_size, num_frames, 1, 1))
+        dummy_input_flat = tf.reshape(dummy_input, (batch_size * num_frames, -1, 3))
 
-    # Example of how to call the functions
-    batch_size = 128
-    num_frames = 3
-    dummy_input = tf.reshape(cloth.v_template, (1, 1, -1, 3))
-    dummy_input = tf.tile(dummy_input, (batch_size, num_frames, 1, 1))
-    dummy_input_flat = tf.reshape(dummy_input, (batch_size * num_frames, -1, 3))
+        energy_stretch = stretching_energy(
+            v=dummy_input_flat,
+            cloth=cloth,
+        )
 
-    energy_stretch = stretching_energy(
-        v=dummy_input_flat,
-        cloth=cloth,
-    )
+        energy_bend = bending_energy(
+            v=dummy_input_flat,
+            cloth=cloth
+        )
 
-    energy_bend = bending_energy(
-        v=dummy_input_flat,
-        cloth=cloth
-    )
+        energy_gravity = gravitational_energy(
+            x=dummy_input_flat,
+            mass=cloth.v_mass
+        )
 
-    energy_gravity = gravitational_energy(
-        x=dummy_input_flat,
-        mass=cloth.v_mass
-    )
+        inertia = inertial_term_sequence(
+            x=dummy_input,
+            mass=cloth.v_mass,
+            time_step=1/30
+        )
 
-    inertia = inertial_term_sequence(
-        x=dummy_input,
-        mass=cloth.v_mass,
-        time_step=1/30
-    )
+        print(f"Strech energy: {energy_stretch:.2E}")
+        print(f"Bending energy: {energy_bend:.2E}")
+        print(f"Gravity: {energy_gravity:.2E}")
+        print(f"Inertia: {inertia:.2E}")
 
-    print(f"Strech energy: {energy_stretch:.2E}")
-    print(f"Bending energy: {energy_bend:.2E}")
-    print(f"Gravity: {energy_gravity:.2E}")
-    print(f"Inertia: {inertia:.2E}")
+        penalty  = collision_penalty(dummy_input_flat, dummy_input_flat*2, dummy_input_flat)
+        print(penalty)

@@ -1,6 +1,9 @@
 venv
 tmp
+Data
 rendering
 assets/CMU/*
+assets/CMU2/*
 assets/SMPL/*
 __pycache__
+#train_snug_v2.py

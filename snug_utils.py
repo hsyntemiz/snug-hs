@@ -2,8 +2,9 @@ import os
 
 import tensorflow as tf
 import numpy as np
-
+import scipy.io as sio
 from scipy.spatial.transform import Rotation as R
+from scipy.spatial import cKDTree
 
 
 def load_obj(filename, tex_coords=False):
@@ -15,7 +16,7 @@ def load_obj(filename, tex_coords=False):
     with open(filename, 'r') as fp:
         for line in fp:
             line_split = line.split()
-            
+
             if not line_split:
                 continue
 
@@ -49,7 +50,7 @@ def save_obj(filename, vertices, faces):
 
     if tf.is_tensor(vertices):
         vertices = vertices.numpy()
-    
+
     if tf.is_tensor(faces):
         faces = faces.numpy()
 
@@ -62,8 +63,55 @@ def save_obj(filename, vertices, faces):
 
         for f in (faces + 1):  # Faces are 1-based, not 0-based in obj files
             fp.write('f %d %d %d\n' % (f[0], f[1], f[2]))
-    
+
     print("Saved:", filename)
+
+
+def _todict(matobj):
+    '''
+	A recursive function which constructs from matobjects nested dictionaries
+	'''
+    dict = {}
+    for strg in matobj._fieldnames:
+        elem = matobj.__dict__[strg]
+        if isinstance(elem, sio.matlab.mio5_params.mat_struct):
+            dict[strg] = _todict(elem)
+        elif isinstance(elem, np.ndarray) and np.any(
+                [isinstance(item, sio.matlab.mio5_params.mat_struct) for item in elem]):
+            dict[strg] = [None] * len(elem)
+            for i, item in enumerate(elem):
+                if isinstance(item, sio.matlab.mio5_params.mat_struct):
+                    dict[strg][i] = _todict(item)
+                else:
+                    dict[strg][i] = item
+        else:
+            dict[strg] = elem
+    return dict
+
+
+def _check_keys(dict):
+    '''
+	checks if entries in dictionary are mat-objects. If yes
+	todict is called to change them to nested dictionaries
+	'''
+    for key in dict:
+        if isinstance(dict[key], sio.matlab.mio5_params.mat_struct):
+            dict[key] = _todict(dict[key])
+    return dict
+
+
+def loadInfo(filename):
+    '''
+	this function should be called instead of direct sio.loadmat
+	as it cures the problem of not properly recovering python dictionaries
+	from mat files. It calls the function check keys to cure all entries
+	which are still mat-objects
+	'''
+    data = sio.loadmat(filename, struct_as_record=False, squeeze_me=True)
+    del data['__globals__']
+    del data['__header__']
+    del data['__version__']
+    return _check_keys(data)
 
 
 def load_motion(path):
@@ -82,7 +130,7 @@ def load_motion(path):
     trans = swap_rotation.apply(trans)
 
     # Center model in first frame
-    trans = trans - trans[0] 
+    trans = trans - trans[0]
 
     # Compute velocities
     trans_vel = finite_diff(trans, 1 / 30)
@@ -91,7 +139,7 @@ def load_motion(path):
 
 
 def separate_arms(poses, angle=20, left_arm=17, right_arm=16):
-    num_joints = poses.shape[-1] //3
+    num_joints = poses.shape[-1] // 3
 
     poses = poses.reshape((-1, num_joints, 3))
     rot = R.from_euler('z', -angle, degrees=True)
@@ -112,7 +160,7 @@ def finite_diff(x, h, diff=1):
     v = np.zeros(x.shape, dtype=x.dtype)
     v[1:] = (x[1:] - x[0:-1]) / h
 
-    return finite_diff(v, h, diff-1)
+    return finite_diff(v, h, diff - 1)
 
 
 def get_model_path(garment):
@@ -142,3 +190,19 @@ def get_model_path(garment):
     assert garment in garments, f"'{garment}' is not a valid option. Valid options: {list(garments.keys())}"
 
     return garments[garment]
+
+
+def weights_prior(T, B, weights):
+    tree = cKDTree(B)
+    _, idx = tree.query(T)
+    return weights[idx]
+
+
+def my_weights_prior(T, B, weights):
+    t_l = T.shape[0]
+    idx = np.zeros(t_l,dtype=int)
+    for i, t in enumerate(T):
+        dist = tf.math.reduce_euclidean_norm(B-t,axis=-1)
+        idx[i]=tf.argmin(dist).numpy().astype(int)
+    print(idx)
+    return idx, weights[idx]

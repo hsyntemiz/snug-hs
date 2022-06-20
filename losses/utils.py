@@ -12,6 +12,7 @@ def pairwise_distance(A, B):
 def find_nearest_neighbour(A, B, dtype=np.int32):
     nearest_neighbour = np.argmin(pairwise_distance(A, B), axis=1)
     return nearest_neighbour.astype(dtype)
+    # return tf.convert_to_tensor(nearest_neighbour.astype(dtype))
 
 
 def get_vertex_connectivity(faces, dtype=tf.int32):
@@ -196,8 +197,11 @@ def fix_collisions(vc, vb, nb, eps=0.002):
 
     # For each vertex of the cloth, find the closest vertices in the body's surface
     closest_vertices = find_nearest_neighbour(vc, vb)
-    vb = vb[closest_vertices] 
-    nb = nb[closest_vertices] 
+    # closest_vertices2 = tf.cast(closest_vertices, tf.int64)
+    # vb = vb[closest_vertices]
+    # nb = nb[closest_vertices]
+    vb = tf.gather(vb,closest_vertices)
+    nb = tf.gather(nb,closest_vertices)
 
     # Test penetrations
     penetrations = np.sum(nb*(vc - vb), axis=1) - eps
@@ -209,3 +213,26 @@ def fix_collisions(vc, vb, nb, eps=0.002):
 
     return vc_fixed
 
+def fix_collisions_sequence(vc, vb, nb, eps=0.002):
+    """
+    Fix the collisions between the clothing and the body by projecting
+    the clothing's vertices outside the body's surface
+    """
+
+    # For each vertex of the cloth, find the closest vertices in the body's surface
+    closest_vertices = find_nearest_neighbour(vc[0], vb[0])
+    # closest_vertices2 = tf.cast(closest_vertices, tf.int64)
+    # vb = vb[closest_vertices]
+    # nb = nb[closest_vertices]
+    vb = tf.gather(vb,closest_vertices,axis=1)
+    nb = tf.gather(nb,closest_vertices,axis=1)
+
+    # Test penetrations
+    penetrations = np.sum(nb*(vc - vb), axis=2) - eps
+    penetrations = np.minimum(penetrations, 0)
+
+    # Fix the clothing
+    corrective_offset = -np.multiply(nb, penetrations[:,:,np.newaxis])
+    vc_fixed = vc + corrective_offset
+
+    return vc_fixed

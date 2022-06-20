@@ -59,7 +59,7 @@ class SMPL(keras.layers.Layer):
     def call(self, shape=None, pose=None, translation=None):
         # Add shape blenshape
         shape_blendshape = tf.reshape(
-            tensor=tf.matmul(shape, self.shapedirs),
+            tensor=tf.matmul(shape, self.shapedirs[:10,:]),
             shape=[-1, self.num_vertices, 3],
             name="shape_blendshape"
         )

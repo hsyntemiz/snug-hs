@@ -1,1 +1,7 @@
+20 June 2022 iter_00
 - Adding training scripts.
+- smpl.py: edit shape 300 - > 10
+- Online 3d obj viewer : https://3dviewer.net/
+- blender --background rendering/scene.blend --python rendering/render.py  --path tmp/07_02/
+- train_snug_v2.py : not works well. Dataset reading issues.
+- train_snug_v* codes are still messy. 
